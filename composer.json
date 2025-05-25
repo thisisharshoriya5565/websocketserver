@@ -14,7 +14,7 @@
     "extra": {
         "laravel": {
             "providers": [
-                "Bhanu\\WebSocketServer\\WebSocketServerServiceProvider"
+                "Bhanu\\WebSocketServer\\WebSocketServiceProvider"
             ]
         }
     }
