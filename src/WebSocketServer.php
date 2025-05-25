@@ -107,11 +107,19 @@ class WebSocketServer
     {
         $data = $this->mask($message);
         foreach ($this->clients as $clientId => $clientSocket) {
-            if ($clientSocket !== $fromSocket && $this->handshakesDone[$clientId]) {
+            if ($clientSocket !== $fromSocket && $this->isHandshakeComplete($clientId)) {
                 fwrite($clientSocket, $data);
             }
         }
     }
+
+
+    protected function isHandshakeComplete(int $clientId): bool
+    {
+        return isset($this->handshakesDone[$clientId]) && $this->handshakesDone[$clientId];
+    }
+
+
 
     protected function disconnectClient($socket): void
     {
