@@ -1,0 +1,21 @@
+{
+    "name": "bhanu/websocketserver",
+    "description": "A simple Laravel WebSocket server package",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Bhanu\\WebSocketServer\\": "src/"
+        }
+    },
+    "require": {
+        "php": "^8.0"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Bhanu\\WebSocketServer\\WebSocketServerServiceProvider"
+            ]
+        }
+    }
+}
