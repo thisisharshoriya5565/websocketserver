@@ -7,6 +7,9 @@
 Then run:
 # composer require bhanu/websocketserver:dev-main
 composer config repositories.websocketserver vcs https://github.com/thisisharshoriya5565/websocketserver.git
+or 
+composer require bhanu/websocketserver:dev-main --repository='{"type":"vcs","url":"https://github.com/thisisharshoriya5565/websocketserver.git"}'
+
 composer require bhanu/websocketserver:dev-main
 
 Step 2: Register Service Provider (if Laravel < 5.5)
