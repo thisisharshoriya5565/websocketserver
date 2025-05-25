@@ -61,7 +61,16 @@ class WebSocketServer
                         }
 
                         if (!$this->handshakesDone[$clientId]) {
-                            $this->performHandshake($socket, $data);
+                            // Check if it's internal Laravel TCP message (e.g., starts with special prefix)
+                            if (strpos($data, '__LARAVEL__') === 0) {
+                                $message = substr($data, strlen('__LARAVEL__'));
+                                echo "Broadcasting internal message: $message\n";
+                                $this->broadcast($message, null);
+                                $this->disconnectClient($socket);
+                            } else {
+                                $this->performHandshake($socket, $data);
+                            }
+                            // $this->performHandshake($socket, $data);
                         } else {
                             $message = $this->unmask($data);
                             echo "Received from client {$clientId}: $message\n";
