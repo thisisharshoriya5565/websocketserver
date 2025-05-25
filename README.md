@@ -4,20 +4,9 @@
 
 ### Step 1: Add Repository & Require Package
 
-Add the repository to your Laravel project's `composer.json`:
-
-```json
-"repositories": [
-    {
-        "type": "vcs",
-        "url": "https://github.com/thisisharshoriya5565/websocketserver.git"
-    }
-],
-"require": {
-    "bhanu/websocketserver": "dev-main"
-}
-
 Then run:
+# composer require bhanu/websocketserver:dev-main
+composer config repositories.websocketserver vcs https://github.com/thisisharshoriya5565/websocketserver.git
 composer require bhanu/websocketserver:dev-main
 
 Step 2: Register Service Provider (if Laravel < 5.5)
@@ -30,7 +19,6 @@ php artisan websocket:serve
 
 Optionally specify host and port:
 php artisan websocket:serve 127.0.0.1 9090
-
 
 ---
 
