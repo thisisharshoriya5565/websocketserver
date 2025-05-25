@@ -4,177 +4,93 @@ namespace Bhanu\WebSocketServer;
 
 class WebSocketServer
 {
-    protected string $host;
-    protected int $port;
-    /** @var resource[] Array of client sockets keyed by (int)socket */
-    protected array $clients = [];
-    /** @var bool[] Tracks handshake completion for clients */
-    protected array $handshakesDone = [];
+    protected $clients = [];
 
-    public function __construct(string $host = '0.0.0.0', int $port = 8080)
+    public function run()
     {
-        $this->host = $host;
-        $this->port = $port;
-    }
+        $webSocket = stream_socket_server("tcp://0.0.0.0:8080", $errno1, $errstr1);
+        $tcpServer = stream_socket_server("tcp://127.0.0.1:8090", $errno2, $errstr2);
 
-    public function start(): void
-    {
-        $server = stream_socket_server("tcp://{$this->host}:{$this->port}", $errno, $errstr);
-
-        if (!$server) {
-            echo "Error: $errstr ($errno)\n";
-            return;
+        if (!$webSocket || !$tcpServer) {
+            echo "Error: $errstr1 | $errstr2\n";
+            exit(1);
         }
 
-        stream_set_blocking($server, false);
+        echo "WebSocket server started on 0.0.0.0:8080\n";
+        echo "TCP command server started on 127.0.0.1:8090\n";
 
-        echo "WebSocket server started on {$this->host}:{$this->port}\n";
-
-        // Add server socket to clients list (to listen for new connections)
-        $this->clients[(int)$server] = $server;
+        $this->clients = [];
+        $this->clients[] = $webSocket;
 
         while (true) {
             $read = $this->clients;
+            $read[] = $tcpServer;
+
             $write = $except = null;
-
-            // Wait for activity on any socket, with 50ms timeout
-            if (stream_select($read, $write, $except, 0, 50000) > 0) {
+            if (stream_select($read, $write, $except, null)) {
                 foreach ($read as $socket) {
-                    if ($socket === $server) {
-                        // New connection request on server socket
-                        $client = stream_socket_accept($server, 0);
-                        if ($client) {
-                            stream_set_blocking($client, false);
-                            $clientId = (int)$client;
-                            $this->clients[$clientId] = $client;
-                            $this->handshakesDone[$clientId] = false;
-                            echo "New client connected: {$clientId}\n";
-                        }
-                    } else {
-                        $clientId = (int)$socket;
-                        $data = fread($socket, 2048);
+                    if ($socket === $tcpServer) {
+                        // TCP command connection (from Laravel app)
+                        $tcpClient = stream_socket_accept($tcpServer);
+                        $message = fread($tcpClient, 1024);
 
-                        if ($data === false || $data === '') {
-                            // Client disconnected or no data
-                            $this->disconnectClient($socket);
-                            continue;
-                        }
+                        echo "TCP Received: $message\n";
 
-                        if (!$this->handshakesDone[$clientId]) {
-                            // Check if it's internal Laravel TCP message (e.g., starts with special prefix)
-                            if (strpos($data, '__LARAVEL__') === 0) {
-                                $message = substr($data, strlen('__LARAVEL__'));
-                                echo "Broadcasting internal message: $message\n";
-                                $this->broadcast($message, null);
-                                $this->disconnectClient($socket);
-                            } else {
-                                $this->performHandshake($socket, $data);
+                        // Broadcast to all WS clients except the servers themselves
+                        foreach ($this->clients as $client) {
+                            if ($client !== $webSocket && $client !== $tcpServer) {
+                                fwrite($client, $this->encodeWebSocketMessage($message));
                             }
-                            // $this->performHandshake($socket, $data);
-                        } else {
-                            $message = $this->unmask($data);
-                            echo "Received from client {$clientId}: $message\n";
+                        }
 
-                            // Broadcast the received message to all other clients
-                            $this->broadcast($message, $socket);
+                        fclose($tcpClient);
+                    } elseif ($socket === $webSocket) {
+                        // New WebSocket client connection
+                        $client = stream_socket_accept($webSocket);
+                        stream_set_blocking($client, 0); // non-blocking mode
+                        $this->clients[] = $client;
+                        echo "New WebSocket client connected\n";
+                    } else {
+                        // Read from existing WebSocket clients
+                        $data = fread($socket, 1024);
+                        if ($data === false || $data === '') {
+                            echo "Client disconnected\n";
+                            $this->removeClient($socket);
+                        } else {
+                            echo "Received from WS client: $data\n";
+                            // You can add logic here if you want to handle messages from WS clients
                         }
                     }
                 }
             }
         }
-
-        fclose($server);
     }
 
-    protected function performHandshake($client, string $headers): void
+    protected function removeClient($socket)
     {
-        if (!preg_match("/Sec-WebSocket-Key: (.*)\r\n/", $headers, $matches)) {
-            $this->disconnectClient($client);
-            return;
-        }
-
-        $key = trim($matches[1]);
-        $acceptKey = base64_encode(pack('H*', sha1($key . '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')));
-
-        $upgradeHeaders = implode("\r\n", [
-            "HTTP/1.1 101 Switching Protocols",
-            "Upgrade: websocket",
-            "Connection: Upgrade",
-            "Sec-WebSocket-Accept: $acceptKey",
-            "\r\n"
-        ]);
-
-        fwrite($client, $upgradeHeaders);
-
-        $clientId = (int)$client;
-        $this->handshakesDone[$clientId] = true;
-
-        echo "Handshake completed for client: {$clientId}\n";
-    }
-
-    protected function broadcast(string $message, $fromSocket): void
-    {
-        $data = $this->mask($message);
-        foreach ($this->clients as $clientId => $clientSocket) {
-            if ($clientSocket !== $fromSocket && $this->isHandshakeComplete($clientId)) {
-                fwrite($clientSocket, $data);
-            }
+        $index = array_search($socket, $this->clients);
+        if ($index !== false) {
+            fclose($socket);
+            unset($this->clients[$index]);
+            // reindex array
+            $this->clients = array_values($this->clients);
         }
     }
 
-
-    protected function isHandshakeComplete(int $clientId): bool
+    // Encode message to WebSocket frame (text frame)
+    protected function encodeWebSocketMessage(string $payload): string
     {
-        return isset($this->handshakesDone[$clientId]) && $this->handshakesDone[$clientId];
-    }
+        $frameHead = chr(129); // FIN + text frame opcode
 
-
-
-    protected function disconnectClient($socket): void
-    {
-        $clientId = (int)$socket;
-        echo "Client {$clientId} disconnected\n";
-
-        fclose($socket);
-        unset($this->clients[$clientId], $this->handshakesDone[$clientId]);
-    }
-
-    protected function unmask(string $payload): string
-    {
-        $length = ord($payload[1]) & 127;
-
-        if ($length === 126) {
-            $masks = substr($payload, 4, 4);
-            $data = substr($payload, 8);
-        } elseif ($length === 127) {
-            $masks = substr($payload, 10, 4);
-            $data = substr($payload, 14);
-        } else {
-            $masks = substr($payload, 2, 4);
-            $data = substr($payload, 6);
-        }
-
-        $unmasked = '';
-        for ($i = 0, $len = strlen($data); $i < $len; ++$i) {
-            $unmasked .= $data[$i] ^ $masks[$i % 4];
-        }
-
-        return $unmasked;
-    }
-
-    protected function mask(string $text): string
-    {
-        $b1 = chr(0x81); // FIN + text frame opcode
-        $length = strlen($text);
-
+        $length = strlen($payload);
         if ($length <= 125) {
-            $b2 = chr($length);
+            $frameHead .= chr($length);
         } elseif ($length <= 65535) {
-            $b2 = chr(126) . pack('n', $length);
+            $frameHead .= chr(126) . pack('n', $length);
         } else {
-            $b2 = chr(127) . pack('J', $length);
+            $frameHead .= chr(127) . pack('J', $length);
         }
 
-        return $b1 . $b2 . $text;
+        return $frameHead . $payload;
     }
 }
