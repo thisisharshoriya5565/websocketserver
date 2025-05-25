@@ -4,17 +4,20 @@ namespace Bhanu\WebSocketServer;
 
 class WebSocketServer
 {
-    protected $host;
-    protected $port;
-    protected $clients = [];
+    protected string $host;
+    protected int $port;
+    /** @var resource[] Array of client sockets keyed by (int)socket */
+    protected array $clients = [];
+    /** @var bool[] Tracks handshake completion for clients */
+    protected array $handshakesDone = [];
 
-    public function __construct($host = '0.0.0.0', $port = 8080)
+    public function __construct(string $host = '0.0.0.0', int $port = 8080)
     {
         $this->host = $host;
         $this->port = $port;
     }
 
-    public function start()
+    public function start(): void
     {
         $server = stream_socket_server("tcp://{$this->host}:{$this->port}", $errno, $errstr);
 
@@ -27,37 +30,44 @@ class WebSocketServer
 
         echo "WebSocket server started on {$this->host}:{$this->port}\n";
 
-        $this->clients[] = $server;
+        // Add server socket to clients list (to listen for new connections)
+        $this->clients[(int)$server] = $server;
 
         while (true) {
             $read = $this->clients;
             $write = $except = null;
 
+            // Wait for activity on any socket, with 50ms timeout
             if (stream_select($read, $write, $except, 0, 50000) > 0) {
                 foreach ($read as $socket) {
                     if ($socket === $server) {
-                        // New connection
-                        $client = stream_socket_accept($server);
+                        // New connection request on server socket
+                        $client = stream_socket_accept($server, 0);
                         if ($client) {
                             stream_set_blocking($client, false);
-                            $this->clients[] = $client;
+                            $clientId = (int)$client;
+                            $this->clients[$clientId] = $client;
+                            $this->handshakesDone[$clientId] = false;
+                            echo "New client connected: {$clientId}\n";
                         }
                     } else {
+                        $clientId = (int)$socket;
                         $data = fread($socket, 2048);
-                        if (!$data) {
-                            $this->disconnect($socket);
+
+                        if ($data === false || $data === '') {
+                            // Client disconnected or no data
+                            $this->disconnectClient($socket);
                             continue;
                         }
 
-                        if (!$this->isHandshakeDone($socket)) {
-                            $this->doHandshake($socket, $data);
+                        if (!$this->handshakesDone[$clientId]) {
+                            $this->performHandshake($socket, $data);
                         } else {
                             $message = $this->unmask($data);
-                            echo "Received: $message\n";
+                            echo "Received from client {$clientId}: $message\n";
 
-                            // Echo message back
-                            $response = $this->mask("Echo: $message");
-                            fwrite($socket, $response);
+                            // Broadcast the received message to all other clients
+                            $this->broadcast($message, $socket);
                         }
                     }
                 }
@@ -67,10 +77,10 @@ class WebSocketServer
         fclose($server);
     }
 
-    protected function doHandshake($client, $headers)
+    protected function performHandshake($client, string $headers): void
     {
         if (!preg_match("/Sec-WebSocket-Key: (.*)\r\n/", $headers, $matches)) {
-            $this->disconnect($client);
+            $this->disconnectClient($client);
             return;
         }
 
@@ -87,27 +97,32 @@ class WebSocketServer
 
         fwrite($client, $upgradeHeaders);
 
-        // Tag the client as "handshake done"
-        stream_socket_get_name($client, true); // trigger internal stream hash
         $clientId = (int)$client;
-        $this->clients[$clientId] = $client;
+        $this->handshakesDone[$clientId] = true;
+
+        echo "Handshake completed for client: {$clientId}\n";
     }
 
-    protected function isHandshakeDone($socket)
+    protected function broadcast(string $message, $fromSocket): void
     {
-        $clientId = (int)$socket;
-        return isset($this->clients[$clientId]);
+        $data = $this->mask($message);
+        foreach ($this->clients as $clientId => $clientSocket) {
+            if ($clientSocket !== $fromSocket && $this->handshakesDone[$clientId]) {
+                fwrite($clientSocket, $data);
+            }
+        }
     }
 
-    protected function disconnect($socket)
+    protected function disconnectClient($socket): void
     {
         $clientId = (int)$socket;
-        echo "Client $clientId disconnected\n";
+        echo "Client {$clientId} disconnected\n";
+
         fclose($socket);
-        unset($this->clients[$clientId]);
+        unset($this->clients[$clientId], $this->handshakesDone[$clientId]);
     }
 
-    protected function unmask($payload)
+    protected function unmask(string $payload): string
     {
         $length = ord($payload[1]) & 127;
 
@@ -123,23 +138,24 @@ class WebSocketServer
         }
 
         $unmasked = '';
-        for ($i = 0; $i < strlen($data); ++$i) {
+        for ($i = 0, $len = strlen($data); $i < $len; ++$i) {
             $unmasked .= $data[$i] ^ $masks[$i % 4];
         }
 
         return $unmasked;
     }
 
-    protected function mask($text)
+    protected function mask(string $text): string
     {
         $b1 = chr(0x81); // FIN + text frame opcode
         $length = strlen($text);
+
         if ($length <= 125) {
             $b2 = chr($length);
         } elseif ($length <= 65535) {
-            $b2 = chr(126) . pack("n", $length);
+            $b2 = chr(126) . pack('n', $length);
         } else {
-            $b2 = chr(127) . pack("J", $length);
+            $b2 = chr(127) . pack('J', $length);
         }
 
         return $b1 . $b2 . $text;
