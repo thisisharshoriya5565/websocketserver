@@ -29,7 +29,7 @@ class WebSocketServiceProvider extends ServiceProvider
     {
         if ($this->app->runningInConsole()) {
             $this->commands([
-                \Bhanu\WebSocketServer\Commands\WebSocketServerCommand::class,
+                \Bhanu\WebSocketServer\Console\WebSocketServerCommand::class,
             ]);
         }
 
