@@ -16,14 +16,30 @@ class WebSocketServiceProvider extends ServiceProvider
     //     // Publish config or routes if needed
     // }
 
+    // public function boot()
+    // {
+    //     if ($this->app->runningInConsole()) {
+    //         $this->commands([
+    //             \Bhanu\WebSocketServer\Console\WebSocketServeCommand::class,
+    //         ]);
+    //     }
+    // }
+
     public function boot()
     {
         if ($this->app->runningInConsole()) {
             $this->commands([
-                \Bhanu\WebSocketServer\Console\WebSocketServeCommand::class,
+                \Bhanu\WebSocketServer\Commands\WebSocketServerCommand::class,
             ]);
         }
+
+        // Auto-start when app boots (optional)
+        if (app()->runningInConsole() === false) {
+            $server = new \Bhanu\WebSocketServer\WebSocketServer();
+            $server->run(); // make sure it doesn't block Laravel HTTP
+        }
     }
+
 
 
     /***
